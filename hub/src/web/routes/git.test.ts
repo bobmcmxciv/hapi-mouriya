@@ -1,4 +1,9 @@
 import { describe, expect, it } from 'bun:test'
+import { spawnSync } from 'node:child_process'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { Hono } from 'hono'
 import { SignJWT } from 'jose'
 import type { Session, SyncEngine } from '../../sync/syncEngine'
@@ -79,6 +84,77 @@ describe('session file route', () => {
         })
 
         expect(response.status).toBe(400)
+    })
+})
+
+describe('session file search route', () => {
+    // Use the same bundled ripgrep as the CLI when it is not installed on PATH.
+    const ripgrep = Bun.which('rg') ?? fileURLToPath(new URL(
+        `../../../../cli/tools/unpacked/${process.platform === 'win32' ? 'rg.exe' : 'rg'}`,
+        import.meta.url
+    ))
+
+    async function searchFiles(sessionPath: string, query: string, fileNames: string[]) {
+        const workspace = mkdtempSync(join(tmpdir(), 'hapi-file-search-'))
+        const session = {
+            id: 'session-search', namespace: 'default', active: true, metadata: { path: sessionPath }
+        } as unknown as Session
+        const engine: Partial<SyncEngine> = {
+            resolveSessionAccess: () => ({ ok: true as const, sessionId: session.id, session }),
+            runRipgrep: async (sessionId, args, cwd) => {
+                expect(sessionId).toBe(session.id)
+                expect(cwd).toBe(sessionPath)
+                // The fixture stands in for the remote session filesystem, but glob
+                // matching and file enumeration are performed by the real CLI tool.
+                const result = spawnSync(ripgrep, [...args, '--path-separator', '/'], {
+                    cwd: workspace,
+                    encoding: 'utf8',
+                    windowsHide: true
+                })
+                if (result.error) throw result.error
+                return { success: result.status === 0 || result.status === 1, stdout: result.stdout, stderr: result.stderr }
+            }
+        }
+
+        try {
+            for (const name of fileNames) {
+                const parts = name.split('/')
+                mkdirSync(join(workspace, ...parts.slice(0, -1)), { recursive: true })
+                writeFileSync(join(workspace, ...parts), 'search fixture')
+            }
+            const response = await buildApp(engine).request(
+                `/api/sessions/${session.id}/files?${new URLSearchParams({ query })}`
+            )
+            expect(response.status).toBe(200)
+            return await response.json()
+        } finally {
+            rmSync(workspace, { recursive: true, force: true })
+        }
+    }
+
+    for (const sessionPath of ['C:\\work\\project', 'c:/work/project', '\\\\server\\share\\project', '//server/share/project']) {
+        it(`finds files using a backslash query for Windows session ${sessionPath}`, async () => {
+            expect(await searchFiles(sessionPath, 'src\\needle', ['src/needle.ts', 'src/other.ts'])).toEqual({
+                success: true,
+                files: [{ fileName: 'needle.ts', filePath: 'src', fullPath: 'src/needle.ts', fileType: 'file' }]
+            })
+        })
+    }
+
+    for (const sessionPath of ['/work/project', 'C:relative']) {
+        it(`preserves glob escapes rather than treating ${sessionPath} as an absolute Windows path`, async () => {
+            expect(await searchFiles(sessionPath, String.raw`src/\[literal\].ts`, ['src/[literal].ts', 'src/l.ts'])).toEqual({
+                success: true,
+                files: [{ fileName: '[literal].ts', filePath: 'src', fullPath: 'src/[literal].ts', fileType: 'file' }]
+            })
+        })
+    }
+
+    it.skipIf(process.platform === 'win32')('preserves a query matching a legal POSIX filename containing a backslash', async () => {
+        expect(await searchFiles('/work/project', String.raw`notes\\draft`, ['notes\\draft.txt', 'notes/draft.txt'])).toEqual({
+            success: true,
+            files: [{ fileName: 'notes\\draft.txt', filePath: '', fullPath: 'notes\\draft.txt', fileType: 'file' }]
+        })
     })
 })
 

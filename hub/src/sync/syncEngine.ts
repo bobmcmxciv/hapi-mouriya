@@ -261,8 +261,12 @@ export class SyncEngine {
         return this.messageService.getMessagesPage(sessionId, options)
     }
 
-    getSessionExport(sessionId: string, session: Session): HapiSessionExportResult {
-        return this.messageService.getSessionExport(sessionId, session)
+    getSessionExport(
+        sessionId: string,
+        session: Session,
+        options?: number | { limit?: number; offset?: number }
+    ): HapiSessionExportResult {
+        return this.messageService.getSessionExport(sessionId, session, options)
     }
 
     getDeliverableMessagesAfter(sessionId: string, options: { afterSeq: number; limit: number; now: number }): DecryptedMessage[] {

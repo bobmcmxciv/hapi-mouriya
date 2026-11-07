@@ -119,7 +119,7 @@ export function registerSessionHandlers(socket: CliSocketWithData, deps: Session
 
         const todos = extractTodoWriteTodosFromMessageContent(content)
         if (todos) {
-            const updated = store.sessions.setSessionTodos(sid, todos, msg.createdAt, session.namespace)
+            const updated = store.sessions.setSessionTodos(sid, todos, msg.createdAt, session.namespace, { replaceAtSameTimestamp: true })
             if (updated) {
                 onWebappEvent?.({ type: 'session-updated', sessionId: sid })
             }

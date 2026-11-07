@@ -47,16 +47,22 @@ interface CreateMachineDirectoryRequest {
     name: string
 }
 
+// Windows APIs can return a bare drive for its root; keep drive-relative paths intact.
+function normalizeWindowsDriveRoot(path: string): string {
+    return process.platform === 'win32' && /^[a-z]:$/i.test(path) ? `${path}\\` : path
+}
+
 function normalizeWorkspaceRoots(paths?: string[]): string[] | undefined {
     if (!paths?.length) {
         return undefined
     }
 
     const normalized = Array.from(new Set(paths.map((path) => {
+        const rootPath = normalizeWindowsDriveRoot(path)
         try {
-            return realpathSync(path)
+            return normalizeWindowsDriveRoot(realpathSync.native(rootPath))
         } catch {
-            return resolvePath(path)
+            return normalizeWindowsDriveRoot(resolvePath(rootPath))
         }
     })))
 
@@ -268,9 +274,9 @@ export class ApiMachineClient {
      * intermediate symlink in the parent chain has been resolved.
      */
     private async resolveForWorkspaceCheck(path: string): Promise<string> {
-        const absolute = resolvePath(path)
+        const absolute = normalizeWindowsDriveRoot(resolvePath(normalizeWindowsDriveRoot(path)))
         try {
-            return await realpath(absolute)
+            return normalizeWindowsDriveRoot(await realpath(absolute))
         } catch {
             const missing: string[] = []
             let cursor = absolute
@@ -278,7 +284,7 @@ export class ApiMachineClient {
                 missing.unshift(basename(cursor))
                 cursor = dirname(cursor)
                 try {
-                    return join(await realpath(cursor), ...missing)
+                    return join(normalizeWindowsDriveRoot(await realpath(cursor)), ...missing)
                 } catch {
                     // keep walking to the nearest existing parent
                 }

@@ -133,6 +133,18 @@ Only if they have your access token. For additional security:
 - Check firewall allows port 3006
 - Verify `HAPI_API_URL` is correct
 
+### Web updates stop after returning to the app
+
+The web app rebuilds its SSE connection when a hidden page becomes visible or is restored from the browser back/forward cache, then refreshes session data. A connection that does not open within 10 seconds is closed and retried automatically. The reconnecting banner distinguishes connection timeout, heartbeat timeout, and foreground recovery.
+
+### Windows workspace browsing or file search fails
+
+With workspace browsing enabled, both `C:` and `C:\` refer to the drive root; paths such as `C:project` remain drive-relative. File search accepts Windows backslash separators as well as forward slashes. Workspace boundary checks still apply.
+
+### Where are OMP tasks displayed?
+
+Open **Conversation outline** in a session to view its current **Tasks** list. Successful OMP `todo` results update the list from their full phase/task snapshot, not from incremental tool inputs. Updates replace previous state, including updates in the same millisecond; an empty snapshot clears the list. Historical messages also restore task state when a session is loaded.
+
 ### My phone cannot access HAPI on the local network
 
 If HAPI works on your computer but not from another device on the same LAN, check the hub bind address first. By default, HAPI listens on `127.0.0.1`, which only accepts localhost connections.
@@ -197,6 +209,10 @@ irm 'https://cursor.com/install?win32=true' | iex
 ```
 
 Ensure `agent` is on your PATH.
+
+### Cursor migration succeeds but the old database remains
+
+On Windows, source cleanup releases unreachable SQLite handles and retries `EBUSY` or `EPERM` failures up to three attempts, waiting 50 ms and then 250 ms between attempts. If the file remains locked, migration keeps the verified ACP target and logs the cleanup failure without rolling it back. Other cleanup errors are not retried.
 
 ### How do I run diagnostics?
 

@@ -67,6 +67,7 @@ Both `start` and `start-sync` accept repeatable `--workspace-root <path>` (or `-
 - The web `/browse` page surfaces scoped file trees rooted at those paths.
 - The runner refuses `list-directory` and `spawn-session` requests for paths outside the configured roots.
 - `~` and `~/foo` are expanded.
+- On Windows, a bare drive such as `C:` is treated as the drive root (`C:\`) for workspace roots and directory browsing; drive-relative paths such as `C:project` keep their usual semantics.
 
 Omitting the flag keeps the legacy behavior: no scoping, no `/browse` feature.
 

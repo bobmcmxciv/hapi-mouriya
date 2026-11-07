@@ -1215,6 +1215,7 @@ function SessionChatInner(props: SessionChatProps) {
                         outlineOpen={outlineOpen}
                         outlineTitle={outlineTitle}
                         outlineItems={outlineItems}
+                        todos={props.session.todos}
                         onOutlineOpenChange={setOutlineOpen}
                     />
 

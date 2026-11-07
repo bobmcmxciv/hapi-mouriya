@@ -68,6 +68,68 @@ function isExportVisibleStoredMessage(message: StoredMessageForDelivery): boolea
     return isClaudeChatVisibleMessage({ type: data.type, subtype: data.subtype })
 }
 
+function extractExportAgentData(message: StoredMessageForDelivery): Record<string, unknown> | null {
+    const record = unwrapRoleWrappedRecordEnvelope(message.content)
+    if (record?.role !== 'agent' || !isObject(record.content)) return null
+    if (record.content.type !== 'codex' || !isObject(record.content.data)) return null
+    return record.content.data
+}
+
+function collapseSupersededExportMessages(messages: StoredMessageForDelivery[]): StoredMessageForDelivery[] {
+    const lastAgentRunUpdateIndexByCard = new Map<string, number>()
+    for (let index = 0; index < messages.length; index += 1) {
+        const data = extractExportAgentData(messages[index])
+        if (!data || data.type !== 'agent-run-update') continue
+        const cardKey = typeof data.cardId === 'string' && data.cardId
+            ? data.cardId
+            : typeof data.agentId === 'string' && data.agentId
+                ? data.agentId
+                : null
+        if (cardKey) {
+            lastAgentRunUpdateIndexByCard.set(cardKey, index)
+        }
+    }
+
+    const seenInProgressToolCallIds = new Set<string>()
+    const collapsed: StoredMessageForDelivery[] = []
+    for (let index = 0; index < messages.length; index += 1) {
+        const message = messages[index]
+        const data = extractExportAgentData(message)
+        if (data?.type === 'agent-run-update') {
+            const cardKey = typeof data.cardId === 'string' && data.cardId
+                ? data.cardId
+                : typeof data.agentId === 'string' && data.agentId
+                    ? data.agentId
+                    : null
+            const status = typeof data.status === 'string' ? data.status : 'running'
+            const lastIndex = cardKey ? lastAgentRunUpdateIndexByCard.get(cardKey) : undefined
+            if (
+                lastIndex !== undefined
+                && index < lastIndex
+                && (status === 'running' || status === 'pending')
+            ) {
+                continue
+            }
+        } else if (data?.type === 'tool-call' && typeof data.callId === 'string' && data.callId) {
+            const status = typeof data.status === 'string' ? data.status : 'in_progress'
+            if (status === 'in_progress' || status === 'pending') {
+                if (seenInProgressToolCallIds.has(data.callId) && data.progress === undefined) {
+                    continue
+                }
+                seenInProgressToolCallIds.add(data.callId)
+            } else if (
+                (status === 'completed' || status === 'failed')
+                && seenInProgressToolCallIds.delete(data.callId)
+                && data.progress === undefined
+            ) {
+                continue
+            }
+        }
+        collapsed.push(message)
+    }
+    return collapsed
+}
+
 export class MessageService {
     /** One scheduled-matured SSE per localId per hub process (cleared on cancel/consume paths here). */
     private readonly scheduledMatureNotifiedLocalIds = new Set<string>()
@@ -94,25 +156,34 @@ export class MessageService {
     getSessionExport(
         sessionId: string,
         session: Session,
-        limit: number = SESSION_EXPORT_MESSAGE_LIMIT
+        options: number | { limit?: number; offset?: number } = SESSION_EXPORT_MESSAGE_LIMIT
     ): HapiSessionExportResult {
-        const messages = this.store.messages.getAllMessages(sessionId)
-            .filter(isExportVisibleStoredMessage)
-            .sort((a, b) => {
-                const aAt = a.invokedAt ?? a.createdAt
-                const bAt = b.invokedAt ?? b.createdAt
-                return aAt !== bAt ? aAt - bAt : a.seq - b.seq
-            })
-            .map(toDecryptedMessage)
+        const isPaged = typeof options === 'object' && options !== null
+        const limit = typeof options === 'number'
+            ? options
+            : options.limit ?? SESSION_EXPORT_MESSAGE_LIMIT
+        const offset = isPaged ? Math.max(0, options.offset ?? 0) : 0
 
-        if (messages.length > limit) {
+        const sorted = collapseSupersededExportMessages(
+            this.store.messages.getAllMessages(sessionId)
+                .filter(isExportVisibleStoredMessage)
+                .sort((a, b) => {
+                    const aAt = a.invokedAt ?? a.createdAt
+                    const bAt = b.invokedAt ?? b.createdAt
+                    return aAt !== bAt ? aAt - bAt : a.seq - b.seq
+                })
+        )
+
+        if (!isPaged && sorted.length > limit) {
             return {
                 type: 'too-large',
-                count: messages.length,
+                count: sorted.length,
                 limit
             }
         }
 
+        const messages = (isPaged ? sorted.slice(offset, offset + limit) : sorted)
+            .map(toDecryptedMessage)
         return {
             type: 'success',
             payload: {

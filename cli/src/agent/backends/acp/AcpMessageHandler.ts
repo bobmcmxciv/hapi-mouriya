@@ -796,6 +796,7 @@ export class AcpMessageHandler {
             this.onMessage({
                 type: 'tool_result',
                 id: toolCallId,
+                name: this.toolCalls.get(toolCallId)?.name,
                 output,
                 status: status === 'failed' ? 'failed' : 'completed'
             });

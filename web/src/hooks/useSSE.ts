@@ -39,6 +39,8 @@ type VisibilityState = 'visible' | 'hidden'
 type ToastEvent = Extract<SyncEvent, { type: 'toast' }>
 
 const HEARTBEAT_STALE_MS = 90_000
+const FOREGROUND_RESUME_STALE_MS = 45_000
+const CONNECT_TIMEOUT_MS = 10_000
 const HEARTBEAT_WATCHDOG_INTERVAL_MS = 10_000
 const RECONNECT_BASE_DELAY_MS = 1_000
 const RECONNECT_MAX_DELAY_MS = 30_000
@@ -199,18 +201,22 @@ export function useSSE(options: {
         const eventSource = new EventSource(url)
         let disconnectNotified = false
         let reconnectRequested = false
+        let disposed = false
         eventSourceRef.current = eventSource
         lastActivityAtRef.current = Date.now()
 
         const scheduleReconnect = () => {
             const attempt = reconnectAttemptRef.current
-            const exponentialDelay = Math.min(RECONNECT_MAX_DELAY_MS, RECONNECT_BASE_DELAY_MS * (2 ** attempt))
+            const exponentialDelay = attempt === 0
+                ? 0
+                : Math.min(RECONNECT_MAX_DELAY_MS, RECONNECT_BASE_DELAY_MS * (2 ** (attempt - 1)))
             const jitter = Math.floor(Math.random() * (RECONNECT_JITTER_MS + 1))
             reconnectAttemptRef.current = attempt + 1
             if (reconnectTimerRef.current) {
                 clearTimeout(reconnectTimerRef.current)
             }
             reconnectTimerRef.current = setTimeout(() => {
+                if (disposed) return
                 reconnectTimerRef.current = null
                 setReconnectNonce((value) => value + 1)
             }, exponentialDelay + jitter)
@@ -225,10 +231,11 @@ export function useSSE(options: {
         }
 
         const requestReconnect = (reason: string) => {
-            if (reconnectRequested) {
+            if (disposed || reconnectRequested) {
                 return
             }
             reconnectRequested = true
+            clearTimeout(connectTimeoutTimer)
             notifyDisconnect(reason)
             eventSource.close()
             if (eventSourceRef.current === eventSource) {
@@ -237,6 +244,12 @@ export function useSSE(options: {
             setSubscriptionId(null)
             scheduleReconnect()
         }
+
+        const connectTimeoutTimer = setTimeout(() => {
+            if (eventSource.readyState !== EventSource.OPEN) {
+                requestReconnect('connect-timeout')
+            }
+        }, CONNECT_TIMEOUT_MS)
 
         const flushInvalidations = () => {
             const pending = pendingInvalidationsRef.current
@@ -536,6 +549,7 @@ export function useSSE(options: {
         }
 
         const handleMessage = (message: MessageEvent<string>) => {
+            if (disposed || reconnectRequested) return
             if (typeof message.data !== 'string') {
                 return
             }
@@ -559,6 +573,8 @@ export function useSSE(options: {
 
         eventSource.onmessage = handleMessage
         eventSource.onopen = () => {
+            if (disposed || reconnectRequested) return
+            clearTimeout(connectTimeoutTimer)
             if (reconnectTimerRef.current) {
                 clearTimeout(reconnectTimerRef.current)
                 reconnectTimerRef.current = null
@@ -569,6 +585,7 @@ export function useSSE(options: {
             onConnectRef.current?.()
         }
         eventSource.onerror = (error) => {
+            if (disposed || reconnectRequested) return
             onErrorRef.current?.(error)
             if (eventSource.readyState === EventSource.CLOSED) {
                 requestReconnect('closed')
@@ -597,13 +614,15 @@ export function useSSE(options: {
         const onVisibilityChange = () => {
             if (getVisibilityState() !== 'visible') return
             if (eventSourceRef.current !== eventSource) return
-            if (Date.now() - lastActivityAtRef.current >= HEARTBEAT_STALE_MS) {
+            if (Date.now() - lastActivityAtRef.current >= FOREGROUND_RESUME_STALE_MS) {
                 requestReconnect('visibility-recovery')
             }
         }
         document.addEventListener('visibilitychange', onVisibilityChange)
 
         return () => {
+            disposed = true
+            clearTimeout(connectTimeoutTimer)
             clearInterval(watchdogTimer)
             document.removeEventListener('visibilitychange', onVisibilityChange)
             if (invalidationTimerRef.current) {

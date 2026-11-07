@@ -151,6 +151,7 @@ export default {
   'session.outline.loadOlder': 'Load earlier',
   'session.outline.empty': 'No outline items in loaded messages',
   'session.outline.kind.user': 'User',
+  'session.outline.tasks': 'Tasks',
 
   // Session actions
   'session.action.rename': 'Rename',
@@ -524,6 +525,7 @@ export default {
   'reconnecting.reason.error': 'stream error',
   'reconnecting.reason.closed': 'stream closed',
   'reconnecting.reason.heartbeatTimeout': 'heartbeat timeout',
+  'reconnecting.reason.connectTimeout': 'connection timeout',
   'reconnecting.reason.visibilityRecovery': 'resuming after background',
   'pwa.update.title': 'New version available',
   'pwa.update.body': 'Reload to get the latest HAPI',

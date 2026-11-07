@@ -32,7 +32,7 @@ export type AgentMessage =
     | { type: 'text'; text: string }
     | { type: 'reasoning'; text: string; id?: string; live?: boolean }
     | { type: 'tool_call'; id: string; name: string; input: unknown; status: 'pending' | 'in_progress' | 'completed' | 'failed' }
-    | { type: 'tool_result'; id: string; output: unknown; status: 'completed' | 'failed' }
+    | { type: 'tool_result'; id: string; name?: string; output: unknown; status: 'completed' | 'failed' }
     | {
         type: 'usage';
         inputTokens: number;

@@ -12,6 +12,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { MessageService } from './messageService'
+import type { EventPublisher } from './eventPublisher'
 import { Store } from '../store'
 import type { Server } from 'socket.io'
 import type { Session, SyncEvent } from '@hapi/protocol/types'
@@ -189,6 +190,95 @@ describe('MessageService goal status filtering', () => {
             count: 2,
             limit: 1
         })
+    })
+
+    it('collapses superseded running agent-run-update rows and duplicate completed tool-call rows during export and supports pagination', () => {
+        const store = makeStore()
+        const session = makeSession(store, 'session-export-compact')
+
+        const startMsg = store.messages.addMessage(session.id, {
+            role: 'agent',
+            content: {
+                type: 'codex',
+                data: {
+                    type: 'agent-run-start',
+                    agentId: 'sub-1',
+                    cardId: 'omp-subagent:sub-1',
+                    status: 'running'
+                }
+            }
+        })
+        for (let i = 0; i < 50; i += 1) {
+            store.messages.addMessage(session.id, {
+                role: 'agent',
+                content: {
+                    type: 'codex',
+                    data: {
+                        type: 'agent-run-update',
+                        agentId: 'sub-1',
+                        cardId: 'omp-subagent:sub-1',
+                        status: 'running',
+                        activity: 'Running',
+                        progress: { tokens: i * 100 }
+                    }
+                }
+            })
+        }
+        const terminalUpdate = store.messages.addMessage(session.id, {
+            role: 'agent',
+            content: {
+                type: 'codex',
+                data: {
+                    type: 'agent-run-update',
+                    agentId: 'sub-1',
+                    cardId: 'omp-subagent:sub-1',
+                    status: 'completed',
+                    activity: 'Completed',
+                    result: 'done'
+                }
+            }
+        })
+        const toolStart = store.messages.addMessage(session.id, {
+            role: 'agent',
+            content: {
+                type: 'codex',
+                data: {
+                    type: 'tool-call',
+                    callId: 'todo-1',
+                    name: 'todo',
+                    input: { op: 'init' },
+                    status: 'in_progress'
+                }
+            }
+        })
+        store.messages.addMessage(session.id, {
+            role: 'agent',
+            content: {
+                type: 'codex',
+                data: {
+                    type: 'tool-call',
+                    callId: 'todo-1',
+                    name: 'todo',
+                    input: { op: 'init' },
+                    status: 'completed'
+                }
+            }
+        })
+
+        const service = new MessageService(store, makeIo(() => {}), makePublisher() as unknown as EventPublisher)
+        const result = service.getSessionExport(session.id, toProtocolSession(session), 10)
+        expect(result.type).toBe('success')
+        if (result.type !== 'success') throw new Error('Expected success export')
+        expect(result.payload.messages.map((message) => message.id)).toEqual([
+            startMsg.id,
+            terminalUpdate.id,
+            toolStart.id
+        ])
+
+        const paged = service.getSessionExport(session.id, toProtocolSession(session), { offset: 1, limit: 1 })
+        expect(paged.type).toBe('success')
+        if (paged.type !== 'success') throw new Error('Expected paged success export')
+        expect(paged.payload.messages.map((message) => message.id)).toEqual([terminalUpdate.id])
     })
 
     it('pages past hidden-only goal status rows', () => {

@@ -48,6 +48,7 @@ function renderPanel(props: Partial<ComponentProps<typeof ConversationOutlinePan
             <ConversationOutlinePanel
                 title="project"
                 items={outlineItems}
+                todos={undefined}
                 hasMoreMessages={false}
                 isLoadingMoreMessages={false}
                 onLoadMore={vi.fn()}

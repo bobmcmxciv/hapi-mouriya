@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useLayoutEffect, useRef } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef } from 'react'
 import { ThreadPrimitive } from '@assistant-ui/react'
 import type { ApiClient } from '@/api/client'
-import type { SessionMetadataSummary } from '@/types/api'
+import type { SessionMetadataSummary, TodoItem } from '@/types/api'
 import type { ConversationOutlineItem } from '@/chat/outline'
 import { getConversationMessageAnchorId } from '@/chat/outline'
 import { HappyChatProvider } from '@/components/AssistantChat/context'
@@ -13,6 +13,7 @@ import { Spinner } from '@/components/Spinner'
 import { useTerminalToolDisplayMode } from '@/hooks/useTerminalToolDisplayMode'
 import { useTranslation } from '@/lib/use-translation'
 import { CloseIcon } from '@/components/icons'
+import { ChecklistList } from '@/components/ToolCard/checklist'
 
 type ScrollAnchor = {
     id: string
@@ -151,6 +152,7 @@ const THREAD_MESSAGE_COMPONENTS = {
 export function ConversationOutlinePanel(props: {
     title: string
     items: readonly ConversationOutlineItem[]
+    todos: readonly TodoItem[] | undefined
     hasMoreMessages: boolean
     isLoadingMoreMessages: boolean
     onLoadMore: () => void
@@ -158,6 +160,10 @@ export function ConversationOutlinePanel(props: {
     onClose: () => void
 }) {
     const { t } = useTranslation()
+    const tasks = useMemo(
+        () => props.todos?.map(({ id, content, status }) => ({ id, text: content, status })) ?? [],
+        [props.todos]
+    )
 
     return (
         <aside
@@ -206,6 +212,12 @@ export function ConversationOutlinePanel(props: {
             ) : null}
 
             <div className="app-scroll-y min-h-0 flex-1 p-2">
+                {tasks.length > 0 ? (
+                    <section className="mb-3 border-b border-[var(--app-border)] px-2 pb-3" aria-label={t('session.outline.tasks')}>
+                        <h3 className="mb-2 text-sm font-semibold">{t('session.outline.tasks')}</h3>
+                        <ChecklistList items={tasks} />
+                    </section>
+                ) : null}
                 {props.items.length === 0 ? (
                     <div className="px-2 py-8 text-center text-sm text-[var(--app-hint)]">
                         {t('session.outline.empty')}
@@ -261,6 +273,7 @@ export function HappyThread(props: {
     outlineOpen: boolean
     outlineTitle: string
     outlineItems: readonly ConversationOutlineItem[]
+    todos: readonly TodoItem[] | undefined
     onOutlineOpenChange: (open: boolean) => void
     onOutlineItemClick?: (item: ConversationOutlineItem) => void
 }) {
@@ -761,6 +774,7 @@ export function HappyThread(props: {
                         <ConversationOutlinePanel
                             title={props.outlineTitle}
                             items={props.outlineItems}
+                            todos={props.todos}
                             hasMoreMessages={props.hasMoreMessages}
                             isLoadingMoreMessages={props.isLoadingMoreMessages}
                             onLoadMore={() => {

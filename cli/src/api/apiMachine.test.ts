@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { mkdtempSync, rmSync, mkdirSync, realpathSync } from 'node:fs'
+import { mkdtempSync, rmSync, mkdirSync, realpathSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { basename, join, parse, relative } from 'node:path'
 
 const ioMock = vi.hoisted(() => vi.fn())
 const listOpencodeModelsForCwdMock = vi.hoisted(() => vi.fn())
@@ -56,6 +56,114 @@ async function callCreateDirectory(client: ApiMachineClient, machineId: string, 
     })
     return JSON.parse(raw) as unknown
 }
+
+async function callListDirectory(client: ApiMachineClient, machineId: string, path: string): Promise<{
+    success: boolean
+    error?: string
+    entries?: { name: string }[]
+}> {
+    // Dispatch through the private manager to exercise the same RPC boundary as Socket.IO.
+    const rpcClient = client as unknown as { rpcHandlerManager: { handleRequest: (req: { method: string; params: string }) => Promise<string> } }
+    return JSON.parse(await rpcClient.rpcHandlerManager.handleRequest({
+        method: `${machineId}:list-directory`,
+        params: JSON.stringify({ path })
+    }))
+}
+
+describe('ApiMachineClient workspace root browsing', () => {
+    it('browses a filesystem root and an existing descendant', async () => {
+        const workspace = mkdtempSync(join(tmpdir(), 'hapi-root-browse-'))
+        const root = parse(realpathSync.native(workspace)).root
+        const machine = makeMachine('machine-filesystem-root')
+        const client = new ApiMachineClient('cli-token', machine, [root])
+        writeFileSync(join(workspace, 'visible.txt'), 'workspace file')
+
+        try {
+            expect((await callListDirectory(client, machine.id, root)).success).toBe(true)
+            const result = await callListDirectory(client, machine.id, workspace)
+            expect(result.success).toBe(true)
+            expect(result.entries?.map((entry) => entry.name)).toContain('visible.txt')
+        } finally {
+            client.shutdown()
+            rmSync(workspace, { recursive: true, force: true })
+        }
+    })
+
+    it.skipIf(process.platform !== 'win32')('treats a bare drive as a root for browsing and missing ancestors', async () => {
+        const workspace = mkdtempSync(join(tmpdir(), 'hapi-drive-root-'))
+        const root = parse(realpathSync.native(workspace)).root
+        const drive = root.slice(0, 2)
+        const otherDrive = drive.toUpperCase() === 'Z:' ? 'Y:' : 'Z:'
+        const machine = makeMachine('machine-bare-drive')
+        const client = new ApiMachineClient('cli-token', machine, [drive])
+        writeFileSync(join(workspace, 'visible.txt'), 'workspace file')
+
+        try {
+            expect((await callListDirectory(client, machine.id, drive)).success).toBe(true)
+            expect((await callListDirectory(client, machine.id, root)).success).toBe(true)
+            const result = await callListDirectory(client, machine.id, workspace)
+            expect(result.success).toBe(true)
+            expect(result.entries?.map((entry) => entry.name)).toContain('visible.txt')
+            const missing = await callListDirectory(client, machine.id, join(root, `${basename(workspace)}-missing`, 'child'))
+            expect(missing.success).toBe(false)
+            expect(missing.error).toMatch(/ENOENT|cannot find/i)
+            expect(await callListDirectory(client, machine.id, `${otherDrive}\\${basename(workspace)}-missing`)).toEqual({
+                success: false,
+                error: 'Path is outside workspace roots'
+            })
+        } finally {
+            client.shutdown()
+            rmSync(workspace, { recursive: true, force: true })
+        }
+    })
+
+    it.skipIf(process.platform !== 'win32')('preserves drive-relative directory semantics', async () => {
+        const workspace = mkdtempSync(join(process.cwd(), '.hapi-drive-relative-'))
+        const driveRelativePath = `${parse(workspace).root.slice(0, 2)}${relative(process.cwd(), workspace)}`
+        const machine = makeMachine('machine-drive-relative')
+        const client = new ApiMachineClient('cli-token', machine, [workspace])
+        writeFileSync(join(workspace, 'relative.txt'), 'drive-relative file')
+
+        try {
+            const result = await callListDirectory(client, machine.id, driveRelativePath)
+            expect(result.success).toBe(true)
+            expect(result.entries?.map((entry) => entry.name)).toEqual(['relative.txt'])
+        } finally {
+            client.shutdown()
+            rmSync(workspace, { recursive: true, force: true })
+        }
+    })
+
+    it('rejects sibling paths, traversal, and existing or missing paths through an escaping symlink', async () => {
+        const fixture = mkdtempSync(join(tmpdir(), 'hapi-root-boundary-'))
+        const workspace = join(fixture, 'workspace')
+        const sibling = join(fixture, 'workspace-other')
+        mkdirSync(workspace)
+        mkdirSync(sibling)
+        symlinkSync(sibling, join(workspace, 'escape'), process.platform === 'win32' ? 'junction' : 'dir')
+        const machine = makeMachine('machine-root-boundary')
+        const client = new ApiMachineClient('cli-token', machine, [workspace])
+
+        try {
+            for (const path of [sibling, join(workspace, '..'), join(workspace, 'escape'), join(workspace, 'escape', 'missing', 'child')]) {
+                expect(await callListDirectory(client, machine.id, path)).toEqual({
+                    success: false,
+                    error: 'Path is outside workspace roots'
+                })
+            }
+            const missing = await callListDirectory(client, machine.id, join(workspace, 'missing', 'child'))
+            expect(missing.success).toBe(false)
+            expect(missing.error).toMatch(/ENOENT|cannot find/i)
+            expect(await callCreateDirectory(client, machine.id, join(workspace, 'escape'), 'blocked')).toEqual({
+                success: false,
+                error: 'Path is outside workspace roots'
+            })
+        } finally {
+            client.shutdown()
+            rmSync(fixture, { recursive: true, force: true })
+        }
+    })
+})
 
 describe('ApiMachineClient create-directory handler', () => {
     it('creates one directory inside a workspace root', async () => {

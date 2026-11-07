@@ -56,6 +56,11 @@ function ifNoneMatchMatches(header: string | undefined, etag: string): boolean {
     })
 }
 
+function normalizeFileSearchQuery(query: string, sessionPath: string): string {
+    const isWindowsPath = /^[a-z]:[\\/]/i.test(sessionPath) || /^(?:\\\\|\/\/)[^\\/]+[\\/][^\\/]+/.test(sessionPath)
+    return isWindowsPath ? query.replace(/\\/g, '/') : query
+}
+
 export function createGitRoutes(getSyncEngine: () => SyncEngine | null): Hono<WebAppEnv> {
     const app = new Hono<WebAppEnv>()
 
@@ -241,7 +246,7 @@ export function createGitRoutes(getSyncEngine: () => SyncEngine | null): Hono<We
             return c.json({ error: 'Invalid query' }, 400)
         }
 
-        const query = parsed.data.query?.trim() ?? ''
+        const query = normalizeFileSearchQuery(parsed.data.query?.trim() ?? '', sessionPath)
         const limit = parsed.data.limit ?? 200
         const args = ['--files']
         if (query) {

@@ -15,6 +15,7 @@ import {
     setSessionResumeWithSessionModel,
     setSessionTeamState,
     setSessionTodos,
+    type SetSessionTodosOptions,
     touchSessionUpdatedAt,
     updateSessionAgentState,
     updateSessionMetadata
@@ -58,8 +59,8 @@ export class SessionStore {
         return updateSessionAgentState(this.db, id, agentState, expectedVersion, namespace)
     }
 
-    setSessionTodos(id: string, todos: unknown, todosUpdatedAt: number, namespace: string): boolean {
-        return setSessionTodos(this.db, id, todos, todosUpdatedAt, namespace)
+    setSessionTodos(id: string, todos: unknown, todosUpdatedAt: number, namespace: string, options?: SetSessionTodosOptions): boolean {
+        return setSessionTodos(this.db, id, todos, todosUpdatedAt, namespace, options)
     }
 
     setSessionTeamState(id: string, teamState: unknown, updatedAt: number, namespace: string): boolean {
